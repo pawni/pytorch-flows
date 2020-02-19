@@ -424,17 +424,19 @@ class CouplingLayer(nn.Module):
             total_inputs = num_inputs + num_cond_inputs
         else:
             total_inputs = num_inputs
-            
+        
+        self.scale = nn.Parameter(torch.zeros([]), True)
+
         self.scale_net = nn.Sequential(
             nn.Linear(total_inputs, num_hidden), s_act_func(),
             nn.Linear(num_hidden, num_hidden), s_act_func(),
-            nn.Linear(num_hidden, num_inputs))
+            nn.Linear(num_hidden, num_inputs), nn.Tanh())
         self.translate_net = nn.Sequential(
             nn.Linear(total_inputs, num_hidden), t_act_func(),
             nn.Linear(num_hidden, num_hidden), t_act_func(),
             nn.Linear(num_hidden, num_inputs))
 
-        def init(m):
+        for m in self.modules():
             if isinstance(m, nn.Linear):
                 m.bias.data.fill_(0)
                 nn.init.orthogonal_(m.weight.data)
@@ -445,15 +447,16 @@ class CouplingLayer(nn.Module):
         masked_inputs = inputs * mask
         if cond_inputs is not None:
             masked_inputs = torch.cat([masked_inputs, cond_inputs], -1)
+
+        log_s = self.scale_net(masked_inputs) * (1 - mask)
+        t = self.translate_net(masked_inputs) * (1 - mask)
+
+        log_s *= self.scale
         
         if mode == 'direct':
-            log_s = self.scale_net(masked_inputs) * (1 - mask)
-            t = self.translate_net(masked_inputs) * (1 - mask)
             s = torch.exp(log_s)
             return inputs * s + t, log_s.sum(-1, keepdim=True)
         else:
-            log_s = self.scale_net(masked_inputs) * (1 - mask)
-            t = self.translate_net(masked_inputs) * (1 - mask)
             s = torch.exp(-log_s)
             return (inputs - t) * s, -log_s.sum(-1, keepdim=True)
 
